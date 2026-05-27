@@ -325,8 +325,22 @@ func runGrafana(f *grafanaFlags) error {
 		return err
 	}
 
-	for _, run := range runs {
-		for _, line := range run.fetchLines {
+	queryCompletePrinted := false
+	for i, run := range runs {
+		if i > 0 {
+			fmt.Println()
+		}
+		for _, info := range run.fetches {
+			if !queryCompletePrinted {
+				fmt.Println(info.queryComplete)
+				fmt.Println()
+				queryCompletePrinted = true
+			}
+			if info.thresholdLine != "" {
+				fmt.Println(info.thresholdLine)
+			}
+		}
+		for _, line := range run.extraLines {
 			fmt.Println(line)
 		}
 
@@ -336,7 +350,7 @@ func runGrafana(f *grafanaFlags) error {
 			continue
 		}
 
-		fmt.Println("\nanalysis:")
+		fmt.Println("analysis:")
 		for _, forDur := range forDurations {
 			results := eval.EvaluateFor(run.series, forDur, f.evalInterval)
 			if f.delayResolutionBy > 0 {
@@ -349,18 +363,18 @@ func runGrafana(f *grafanaFlags) error {
 			}
 
 			if totalFirings == 0 {
-				fmt.Printf("  for %s: never\n", formatDuration(forDur))
+				fmt.Printf("- for %s: never\n", formatDuration(forDur))
 				continue
 			}
 
 			if len(correlationLabels) > 0 {
 				correlated := eval.CorrelatedFirings(results, correlationLabels, f.delayResolutionBy)
 				incidents := eval.GroupIncidents(results, correlationLabels)
-				fmt.Printf("  for %s: %d firings, %d grouped firings, %d incidents\n",
+				fmt.Printf("- for %s: %d firings, %d grouped firings, %d incidents\n",
 					formatDuration(forDur), totalFirings, correlated, len(incidents))
 				printIncidents(incidents, f.evalInterval, f.verbose)
 			} else {
-				fmt.Printf("  for %s: %d firings\n", formatDuration(forDur), totalFirings)
+				fmt.Printf("- for %s: %d firings\n", formatDuration(forDur), totalFirings)
 				printFirings(results, f.evalInterval, f.verbose)
 			}
 		}
@@ -369,9 +383,15 @@ func runGrafana(f *grafanaFlags) error {
 	return nil
 }
 
+type fetchInfo struct {
+	queryComplete string
+	thresholdLine string // empty if no local predicate
+}
+
 type evalRun struct {
 	displayExpr string
-	fetchLines  []string
+	fetches     []fetchInfo
+	extraLines  []string // e.g. "combined: ..." for multi-clause
 	series      []model.Series
 }
 
@@ -388,18 +408,18 @@ func buildEvalRuns(eng *query.Engine, datasource string, chain *clauseChain, que
 		}
 		out := make([]evalRun, 0, len(runs))
 		for _, r := range runs {
-			series, lines, err := fetchAndFilter(eng, datasource, r, queryFrom, to, step)
+			series, info, err := fetchAndFilter(eng, datasource, r, queryFrom, to, step)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, evalRun{displayExpr: r.displayExpr, fetchLines: lines, series: series})
+			out = append(out, evalRun{displayExpr: r.displayExpr, fetches: []fetchInfo{info}, series: series})
 		}
 		return out, nil
 	}
 
 	clauseSeries := make([][]model.Series, len(chain.clauses))
 	displayParts := make([]string, len(chain.clauses))
-	var allLines []string
+	var allFetches []fetchInfo
 	for i, cl := range chain.clauses {
 		runs, err := buildRuns(cl)
 		if err != nil {
@@ -407,35 +427,37 @@ func buildEvalRuns(eng *query.Engine, datasource string, chain *clauseChain, que
 		}
 		// sweeps already rejected upstream; should always be exactly one
 		r := runs[0]
-		series, lines, err := fetchAndFilter(eng, datasource, r, queryFrom, to, step)
+		series, info, err := fetchAndFilter(eng, datasource, r, queryFrom, to, step)
 		if err != nil {
 			return nil, err
 		}
-		allLines = append(allLines, lines...)
+		allFetches = append(allFetches, info)
 		clauseSeries[i] = eval.NormalizeForCombine(series)
 		displayParts[i] = r.displayExpr
 	}
 
 	combined := combineChain(clauseSeries, chain.joins)
-	allLines = append(allLines, fmt.Sprintf("combined: %d series after %s", len(combined), joinSummary(chain.joins)))
 	return []evalRun{{
 		displayExpr: renderChain(displayParts, chain.joins),
-		fetchLines:  allLines,
+		fetches:     allFetches,
+		extraLines:  []string{fmt.Sprintf("combined: %d series after %s", len(combined), joinSummary(chain.joins))},
 		series:      combined,
 	}}, nil
 }
 
-func fetchAndFilter(eng *query.Engine, datasource string, r run, queryFrom, to time.Time, step time.Duration) ([]model.Series, []string, error) {
+func fetchAndFilter(eng *query.Engine, datasource string, r run, queryFrom, to time.Time, step time.Duration) ([]model.Series, fetchInfo, error) {
 	fmt.Printf("expr: %s\n\n", cache.NormalizeExpr(r.fetchExpr))
 	result, stats, err := eng.Query(datasource, r.fetchExpr, queryFrom, to, step)
 	if err != nil {
-		return nil, nil, err
+		return nil, fetchInfo{}, err
 	}
 	totalSamples := 0
 	for _, s := range result.Series {
 		totalSamples += len(s.Samples)
 	}
-	lines := []string{fmt.Sprintf("query complete: %d chunks (%d cached in %s, %d fetched in %s), %d series returned, %d samples total, max chunk cardinality %d", stats.Chunks, stats.CacheHits, trimDur(stats.CacheTime.Round(time.Millisecond)), stats.CacheMisses, trimDur(stats.FetchTime.Round(time.Millisecond)), len(result.Series), totalSamples, stats.MaxCardinality)}
+	info := fetchInfo{
+		queryComplete: fmt.Sprintf("query complete: %d chunks (%d cached in %s, %d fetched in %s), %d series returned, %d samples total, max chunk cardinality %d", stats.Chunks, stats.CacheHits, trimDur(stats.CacheTime.Round(time.Millisecond)), stats.CacheMisses, trimDur(stats.FetchTime.Round(time.Millisecond)), len(result.Series), totalSamples, stats.MaxCardinality),
+	}
 	series := result.Series
 	if r.predicate != nil {
 		series = applyPredicate(series, r.predicate)
@@ -443,9 +465,9 @@ func fetchAndFilter(eng *query.Engine, datasource string, r run, queryFrom, to t
 		for _, s := range series {
 			kept += len(s.Samples)
 		}
-		lines = append(lines, fmt.Sprintf("local threshold %s: %d samples pass", r.thresholdLabel, kept))
+		info.thresholdLine = fmt.Sprintf("local threshold %s: %d samples pass", r.thresholdLabel, kept)
 	}
-	return series, lines, nil
+	return series, info, nil
 }
 
 // newProgressPrinter returns an Engine.Progress callback. In all modes it
