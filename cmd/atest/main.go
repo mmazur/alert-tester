@@ -466,6 +466,8 @@ func fetchAndFilter(eng *query.Engine, datasource string, r run, queryFrom, to t
 			kept += len(s.Samples)
 		}
 		info.thresholdLine = fmt.Sprintf("local threshold %s: %d samples pass", r.thresholdLabel, kept)
+	} else {
+		info.thresholdLine = fmt.Sprintf("%d samples pass (threshold is in the expression)", totalSamples)
 	}
 	return series, info, nil
 }

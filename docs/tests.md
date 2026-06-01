@@ -38,10 +38,27 @@ fixture. Things worth covering:
 - A NaN sample mid-run resets the run (matches Alertmanager: missing
   sample = resolved).
 - A zero sample mid-run resets the run.
+- A series whose samples are all `0` (e.g. `up == 0` when the target is
+  down) still fires — Prometheus treats series presence, not value, as
+  the fire signal. See issue #1.
 - Multiple firings on the same series: gap of one resolution tick
   produces two firings, not one merged firing.
 - Subsample alignment: samples at irregular timestamps round to the
   eval-interval grid correctly.
+
+### `filterFiringsToWindow` (cmd/atest/main.go)
+
+- A firing entirely inside `[from, to)` is kept.
+- A firing entirely before `from` (resolved during preroll) is dropped.
+- A firing entirely after `to` is dropped.
+- **A firing that began in the preroll and is still active at `from` is
+  kept** — its `[FirstFired, LastFired]` overlaps the window even
+  though `FirstFired < from`. Regression guard for issue #2: a
+  sticky-from-the-start expression (e.g. `absent(missing_metric)`) was
+  silently reported as "never firing" because the single continuous
+  firing's `FirstFired` landed in the preroll and the old start-in-window
+  test dropped it.
+- A firing that began inside the window and continues past `to` is kept.
 
 ### `eval.MergeFirings` (incident.go)
 
@@ -189,8 +206,8 @@ data, the things worth testing:
   Grafana request range matches.
 - **Edge of window behavior.** A firing that starts 5m before the
   `--from` cutoff and continues 5m past it: `filterFiringsToWindow`
-  should keep it (FirstFired ≥ from). One that starts 5m before and
-  resolves before `--from`: should be dropped.
+  should keep it (range overlaps the window). One that starts 5m
+  before and resolves before `--from`: should be dropped.
 - **Auto-resolve at the boundary.** Two firings, one ending at
   `--from - 1m` and the next starting at `--from + 4m`, with
   `--delay-resolution-by 10m`: the merge happens before the window
