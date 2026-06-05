@@ -290,6 +290,31 @@ func TestApplyPredicateBoundaries(t *testing.T) {
 	}
 }
 
+func TestFilterFiringsToWindowKeepsOverlaps(t *testing.T) {
+	t0 := time.Date(2025, 5, 1, 10, 0, 0, 0, time.UTC)
+	results := []model.AlertResult{{
+		LabelSet: map[string]string{"cluster": "a"},
+		Fired:    true,
+		Firings: []model.FiringRange{
+			{FirstFired: t0.Add(-10 * time.Minute), LastFired: t0.Add(-5 * time.Minute)},
+			{FirstFired: t0.Add(-2 * time.Minute), LastFired: t0.Add(2 * time.Minute)},
+			{FirstFired: t0.Add(5 * time.Minute), LastFired: t0.Add(8 * time.Minute)},
+			{FirstFired: t0.Add(15 * time.Minute), LastFired: t0.Add(16 * time.Minute)},
+		},
+	}}
+
+	got := filterFiringsToWindow(results, t0, t0.Add(10*time.Minute))
+	if len(got) != 1 || len(got[0].Firings) != 2 {
+		t.Fatalf("filterFiringsToWindow returned %v, want 2 firings", got)
+	}
+	if got[0].Firings[0].FirstFired != t0.Add(-2*time.Minute) {
+		t.Fatalf("first kept firing = %v, want overlap from preroll", got[0].Firings[0])
+	}
+	if got[0].Firings[1].FirstFired != t0.Add(5*time.Minute) {
+		t.Fatalf("second kept firing = %v, want in-window firing", got[0].Firings[1])
+	}
+}
+
 func TestRenderChain(t *testing.T) {
 	tests := []struct {
 		name     string

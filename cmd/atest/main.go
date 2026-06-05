@@ -741,7 +741,7 @@ func filterFiringsToWindow(results []model.AlertResult, from, to time.Time) []mo
 	for i, r := range results {
 		var kept []model.FiringRange
 		for _, f := range r.Firings {
-			if !f.FirstFired.Before(from) && f.FirstFired.Before(to) {
+			if !f.LastFired.Before(from) && f.FirstFired.Before(to) {
 				kept = append(kept, f)
 			}
 		}
