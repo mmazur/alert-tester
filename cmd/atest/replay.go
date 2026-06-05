@@ -64,7 +64,7 @@ func newReplayCmd() *cobra.Command {
 		Use:   "replay",
 		Short: "Capture and compare local replay baselines from cached data",
 	}
-	cmd.AddCommand(newReplayCaptureCmd())
+	cmd.AddCommand(newReplayCaptureCmd(), newReplayCompareCmd())
 	return cmd
 }
 
