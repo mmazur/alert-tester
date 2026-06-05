@@ -29,6 +29,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.AddCommand(newGrafanaCmd())
+	root.AddCommand(newReplayCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -303,10 +304,24 @@ func runGrafana(f *grafanaFlags) error {
 		return forDurations[i] < forDurations[j]
 	})
 
-	report, err := buildGrafanaReport(f, eng, chain, queryFrom, from, to, queryFrom, preroll, correlationLabels, forDurations)
+	runs, err := buildEvalRuns(eng, f.datasource, chain, queryFrom, to, f.step)
 	if err != nil {
 		return err
 	}
+	report := reportFromRuns(reportRequest{
+		Source:            f.grafanaURL,
+		Datasource:        f.datasource,
+		QueryFrom:         queryFrom,
+		From:              from,
+		To:                to,
+		Preroll:           preroll,
+		Step:              f.step,
+		EvalInterval:      f.evalInterval,
+		ChunkSize:         f.chunkSize,
+		DelayResolutionBy: f.delayResolutionBy,
+		CorrelationLabels: correlationLabels,
+		ForDurations:      forDurations,
+	}, runs)
 	renderGrafanaReport(os.Stdout, report, f.verbose)
 
 	return nil
@@ -325,6 +340,14 @@ type evalRun struct {
 // the underlying buildRuns loop; for multi-clause, it produces one evalRun
 // per combined output.
 func buildEvalRuns(eng *query.Engine, datasource string, chain *clauseChain, queryFrom, to time.Time, step time.Duration) ([]evalRun, error) {
+	return buildEvalRunsWithFetcher(chain, func(r run) ([]model.Series, reportFetch, error) {
+		return fetchAndFilter(eng, datasource, r, queryFrom, to, step)
+	})
+}
+
+type runFetcher func(run) ([]model.Series, reportFetch, error)
+
+func buildEvalRunsWithFetcher(chain *clauseChain, fetch runFetcher) ([]evalRun, error) {
 	if len(chain.clauses) == 1 {
 		runs, err := buildRuns(chain.clauses[0])
 		if err != nil {
@@ -332,7 +355,7 @@ func buildEvalRuns(eng *query.Engine, datasource string, chain *clauseChain, que
 		}
 		out := make([]evalRun, 0, len(runs))
 		for _, r := range runs {
-			series, info, err := fetchAndFilter(eng, datasource, r, queryFrom, to, step)
+			series, info, err := fetch(r)
 			if err != nil {
 				return nil, err
 			}
@@ -351,7 +374,7 @@ func buildEvalRuns(eng *query.Engine, datasource string, chain *clauseChain, que
 		}
 		// sweeps already rejected upstream; should always be exactly one
 		r := runs[0]
-		series, info, err := fetchAndFilter(eng, datasource, r, queryFrom, to, step)
+		series, info, err := fetch(r)
 		if err != nil {
 			return nil, err
 		}

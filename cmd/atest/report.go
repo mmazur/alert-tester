@@ -18,6 +18,21 @@ type analysisConfig struct {
 	To                time.Time
 }
 
+type reportRequest struct {
+	Source            string
+	Datasource        string
+	QueryFrom         time.Time
+	From              time.Time
+	To                time.Time
+	Preroll           time.Duration
+	Step              time.Duration
+	EvalInterval      time.Duration
+	ChunkSize         time.Duration
+	DelayResolutionBy time.Duration
+	CorrelationLabels []string
+	ForDurations      []time.Duration
+}
+
 type grafanaReport struct {
 	Source       string
 	Datasource   string
@@ -70,39 +85,34 @@ type reportAnalysis struct {
 	Incidents      []model.Incident
 }
 
-func buildGrafanaReport(f *grafanaFlags, eng *query.Engine, chain *clauseChain, queryFrom, from, to, sourceStart time.Time, preroll time.Duration, correlationLabels []string, forDurations []time.Duration) (*grafanaReport, error) {
-	runs, err := buildEvalRuns(eng, f.datasource, chain, queryFrom, to, f.step)
-	if err != nil {
-		return nil, err
-	}
-
+func reportFromRuns(req reportRequest, runs []evalRun) *grafanaReport {
 	report := &grafanaReport{
-		Source:       f.grafanaURL,
-		Datasource:   f.datasource,
-		StartTime:    from,
-		EndTime:      to,
-		QueryFrom:    sourceStart,
-		Preroll:      preroll,
-		Step:         f.step,
-		EvalInterval: f.evalInterval,
-		ChunkSize:    f.chunkSize,
+		Source:       req.Source,
+		Datasource:   req.Datasource,
+		StartTime:    req.From,
+		EndTime:      req.To,
+		QueryFrom:    req.QueryFrom,
+		Preroll:      req.Preroll,
+		Step:         req.Step,
+		EvalInterval: req.EvalInterval,
+		ChunkSize:    req.ChunkSize,
 		Runs:         make([]reportRun, 0, len(runs)),
 	}
 
 	cfg := analysisConfig{
-		ForDurations:      forDurations,
-		EvalInterval:      f.evalInterval,
-		DelayResolutionBy: f.delayResolutionBy,
-		CorrelationLabels: correlationLabels,
-		From:              from,
-		To:                to,
+		ForDurations:      req.ForDurations,
+		EvalInterval:      req.EvalInterval,
+		DelayResolutionBy: req.DelayResolutionBy,
+		CorrelationLabels: req.CorrelationLabels,
+		From:              req.From,
+		To:                req.To,
 	}
 
 	for _, run := range runs {
 		report.Runs = append(report.Runs, analyzeRun(run, cfg))
 	}
 
-	return report, nil
+	return report
 }
 
 func analyzeRun(run evalRun, cfg analysisConfig) reportRun {

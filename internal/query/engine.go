@@ -17,6 +17,7 @@ type Engine struct {
 	ChunkSize            time.Duration
 	Verbose              bool
 	AllowHighCardinality bool
+	CacheOnly            bool
 	Output               io.Writer
 	// Progress is called once before fetching starts (with done=0) and then
 	// once after each chunk completes (cache hit or fetched). total is the
@@ -37,9 +38,27 @@ type Stats struct {
 
 const seriesLimitPerChunk = 1000
 
+type TimeRange struct {
+	From time.Time
+	To   time.Time
+}
+
 func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Duration) (*model.QueryResult, Stats, error) {
 	expr = cache.NormalizeExpr(expr)
-	chunks := e.splitChunks(from, to)
+	ranges := e.splitChunks(from, to)
+	chunks := make([]TimeRange, len(ranges))
+	for i, chunk := range ranges {
+		chunks[i] = TimeRange{From: chunk.from, To: chunk.to}
+	}
+	return e.queryChunks(datasource, expr, chunks, step)
+}
+
+func (e *Engine) QueryChunks(datasource, expr string, chunks []TimeRange, step time.Duration) (*model.QueryResult, Stats, error) {
+	expr = cache.NormalizeExpr(expr)
+	return e.queryChunks(datasource, expr, chunks, step)
+}
+
+func (e *Engine) queryChunks(datasource, expr string, chunks []TimeRange, step time.Duration) (*model.QueryResult, Stats, error) {
 	var stats Stats
 	stats.Chunks = len(chunks)
 
@@ -51,11 +70,11 @@ func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Du
 
 	for i, chunk := range chunks {
 		t0 := time.Now()
-		if result, ok := e.Cache.Get(e.Client.URL, datasource, expr, chunk.from, chunk.to, step); ok {
+		if result, ok := e.Cache.Get(e.Client.URL, datasource, expr, chunk.From, chunk.To, step); ok {
 			stats.CacheHits++
 			stats.CacheTime += time.Since(t0)
 			if e.Verbose {
-				e.printf("  chunk %d/%d [%s - %s] CACHE HIT (%d series)\n", i+1, stats.Chunks, chunk.from.Format(time.RFC3339), chunk.to.Format(time.RFC3339), len(result.Series))
+				e.printf("  chunk %d/%d [%s - %s] CACHE HIT (%d series)\n", i+1, stats.Chunks, chunk.From.Format(time.RFC3339), chunk.To.Format(time.RFC3339), len(result.Series))
 			}
 			if len(result.Series) > stats.MaxCardinality {
 				stats.MaxCardinality = len(result.Series)
@@ -69,11 +88,15 @@ func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Du
 
 		stats.CacheMisses++
 		if e.Verbose {
-			e.printf("  chunk %d/%d [%s - %s] querying...\n", i+1, stats.Chunks, chunk.from.Format(time.RFC3339), chunk.to.Format(time.RFC3339))
+			e.printf("  chunk %d/%d [%s - %s] querying...\n", i+1, stats.Chunks, chunk.From.Format(time.RFC3339), chunk.To.Format(time.RFC3339))
+		}
+
+		if e.CacheOnly || e.Client == nil {
+			return nil, stats, fmt.Errorf("chunk %d missing from cache for %s [%s - %s]", i+1, expr, chunk.From.Format(time.RFC3339), chunk.To.Format(time.RFC3339))
 		}
 
 		t1 := time.Now()
-		result, executedStep, err := e.Client.RangeQuery(datasource, expr, chunk.from, chunk.to, step)
+		result, executedStep, err := e.Client.RangeQuery(datasource, expr, chunk.From, chunk.To, step)
 		if err != nil {
 			return nil, stats, fmt.Errorf("chunk %d query failed: %w", i+1, err)
 		}
@@ -93,7 +116,7 @@ func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Du
 			return nil, stats, fmt.Errorf("chunk %d returned %d series, above the %d safety limit; pass --allow-high-cardinality to override", i+1, len(result.Series), seriesLimitPerChunk)
 		}
 
-		if err := e.Cache.Put(e.Client.URL, datasource, expr, chunk.from, chunk.to, step, result); err != nil {
+		if err := e.Cache.Put(e.Client.URL, datasource, expr, chunk.From, chunk.To, step, result); err != nil {
 			e.printf("  warning: cache write failed: %v\n", err)
 		}
 

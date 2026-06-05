@@ -27,14 +27,24 @@ func New(dir string, enabled bool) *Cache {
 }
 
 type entry struct {
-	GrafanaURL   string         `json:"grafana_url"`
-	Datasource   string         `json:"datasource"`
-	Expr         string         `json:"expr"`
-	From         time.Time      `json:"from"`
-	To           time.Time      `json:"to"`
-	StepSeconds  int            `json:"step_seconds"`
-	FetchedAt    time.Time      `json:"fetched_at"`
-	Series       []model.Series `json:"series"`
+	GrafanaURL  string         `json:"grafana_url"`
+	Datasource  string         `json:"datasource"`
+	Expr        string         `json:"expr"`
+	From        time.Time      `json:"from"`
+	To          time.Time      `json:"to"`
+	StepSeconds int            `json:"step_seconds"`
+	FetchedAt   time.Time      `json:"fetched_at"`
+	Series      []model.Series `json:"series"`
+}
+
+type Metadata struct {
+	Path       string
+	GrafanaURL string
+	Datasource string
+	Expr       string
+	From       time.Time
+	To         time.Time
+	Step       time.Duration
 }
 
 func (c *Cache) Get(grafanaURL, datasource, expr string, from, to time.Time, step time.Duration) (*model.QueryResult, bool) {
@@ -54,6 +64,46 @@ func (c *Cache) Get(grafanaURL, datasource, expr string, from, to time.Time, ste
 	}
 
 	return &model.QueryResult{Series: e.Series}, true
+}
+
+func ScanEntries(dir string) ([]Metadata, error) {
+	var out []Metadata
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".json.gz") && !strings.HasSuffix(path, ".json") {
+			return nil
+		}
+
+		data, err := readMaybeGzip(path)
+		if err != nil {
+			return err
+		}
+
+		var e entry
+		if err := json.Unmarshal(data, &e); err != nil {
+			return err
+		}
+
+		out = append(out, Metadata{
+			Path:       path,
+			GrafanaURL: e.GrafanaURL,
+			Datasource: e.Datasource,
+			Expr:       NormalizeExpr(e.Expr),
+			From:       e.From,
+			To:         e.To,
+			Step:       time.Duration(e.StepSeconds) * time.Second,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func readMaybeGzip(path string) ([]byte, error) {
