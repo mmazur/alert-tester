@@ -296,19 +296,8 @@ func runGrafana(f *grafanaFlags) error {
 		eng.Progress = newProgressPrinter(os.Stderr, f.verbose)
 	}
 
-	maxFor := time.Duration(0)
-	for _, d := range forDurations {
-		if d > maxFor {
-			maxFor = d
-		}
-	}
-	prerollBase := maxFor
-	if f.delayResolutionBy > prerollBase {
-		prerollBase = f.delayResolutionBy
-	}
-	prerollBase += 10 * time.Minute
-	preroll := alignUpToChunk(prerollBase, f.chunkSize)
-	queryFrom := from.Add(-preroll)
+	preroll := computePreroll(forDurations, f.delayResolutionBy, f.chunkSize)
+	queryFrom := deriveQueryFrom(from, preroll)
 
 	sort.Slice(forDurations, func(i, j int) bool {
 		return forDurations[i] < forDurations[j]
