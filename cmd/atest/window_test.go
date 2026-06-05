@@ -5,14 +5,14 @@ import (
 	"time"
 )
 
-func TestComputePrerollAlignsToChunk(t *testing.T) {
+func TestComputePrerollHasTwoHourMinimum(t *testing.T) {
 	got := computePreroll([]time.Duration{0}, 0, time.Hour)
-	if got != time.Hour {
-		t.Fatalf("computePreroll = %s, want %s", got, time.Hour)
+	if got != 2*time.Hour {
+		t.Fatalf("computePreroll = %s, want %s", got, 2*time.Hour)
 	}
 }
 
-func TestComputePrerollUsesMaxForAndDelay(t *testing.T) {
+func TestComputePrerollUsesOriginalCalculationAboveMinimum(t *testing.T) {
 	got := computePreroll([]time.Duration{5 * time.Minute, 2 * time.Hour}, 90*time.Minute, time.Hour)
 	if got != 3*time.Hour {
 		t.Fatalf("computePreroll = %s, want %s", got, 3*time.Hour)

@@ -100,7 +100,7 @@ export ATEST_GRAFANA_BEARER_TOKEN=<your-token>
 ```
 type: grafana, source: https://grafana.example.com, datasource: my-prometheus-uid
 starttime: 2025-05-01T00:00:00Z, endtime: 2025-05-08T00:00:00Z (duration: 168h)
-preroll: 1h (querying from 2025-04-30T23:00:00Z)
+preroll: 2h (querying from 2025-04-30T22:00:00Z)
 step: 30s, eval-interval: 1m, chunk-size: 1h
 expr: rate(http_errors_total[5m]) > 0.01
 

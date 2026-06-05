@@ -18,7 +18,11 @@ func computePreroll(forDurations []time.Duration, delayResolutionBy, chunkSize t
 		prerollBase = delayResolutionBy
 	}
 	prerollBase += 10 * time.Minute
-	return alignUpToChunk(prerollBase, chunkSize)
+	preroll := alignUpToChunk(prerollBase, chunkSize)
+	if preroll < 2*time.Hour {
+		return 2 * time.Hour
+	}
+	return preroll
 }
 
 func deriveQueryFrom(from time.Time, preroll time.Duration) time.Time {
