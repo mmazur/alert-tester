@@ -47,7 +47,7 @@ const (
 
 type clauseToken struct {
 	kind  tokenKind
-	value string  // for tokQuery: promql; for tokCmp: encoded as "<op>|<rhs>"
+	value string // for tokQuery: promql; for tokCmp: encoded as "<op>|<rhs>"
 }
 
 // orderedTokens captures --query in argv order.
@@ -223,23 +223,23 @@ func newGrafanaCmd() *cobra.Command {
 }
 
 type grafanaFlags struct {
-	grafanaURL       string
-	datasource       string
-	bearerToken      string
-	clauseTokens     []clauseToken
-	forRaw           []string
-	fromRaw          string
-	toRaw            string
-	chunkSize        time.Duration
-	step             time.Duration
-	evalInterval     time.Duration
-	noCache          bool
-	cacheDir         string
-	correlationID    string
-	delayResolutionBy time.Duration
+	grafanaURL           string
+	datasource           string
+	bearerToken          string
+	clauseTokens         []clauseToken
+	forRaw               []string
+	fromRaw              string
+	toRaw                string
+	chunkSize            time.Duration
+	step                 time.Duration
+	evalInterval         time.Duration
+	noCache              bool
+	cacheDir             string
+	correlationID        string
+	delayResolutionBy    time.Duration
 	allowHighCardinality bool
-	noProgress       bool
-	verbose          bool
+	noProgress           bool
+	verbose              bool
 }
 
 func runGrafana(f *grafanaFlags) error {
@@ -290,6 +290,7 @@ func runGrafana(f *grafanaFlags) error {
 		ChunkSize:            f.chunkSize,
 		Verbose:              f.verbose,
 		AllowHighCardinality: f.allowHighCardinality,
+		Output:               os.Stdout,
 	}
 	if !f.noProgress {
 		eng.Progress = newProgressPrinter(os.Stderr, f.verbose)
@@ -309,88 +310,22 @@ func runGrafana(f *grafanaFlags) error {
 	preroll := alignUpToChunk(prerollBase, f.chunkSize)
 	queryFrom := from.Add(-preroll)
 
-	fmt.Printf("type: grafana, source: %s, datasource: %s\n", f.grafanaURL, f.datasource)
-	fmt.Printf("starttime: %s, endtime: %s (duration: %s)\n", from.Format(time.RFC3339), to.Format(time.RFC3339), trimDur(to.Sub(from)))
-	if preroll > 0 {
-		fmt.Printf("preroll: %s (querying from %s)\n", trimDur(preroll), queryFrom.Format(time.RFC3339))
-	}
-	fmt.Printf("step: %s, eval-interval: %s, chunk-size: %s\n", trimDur(f.step), trimDur(f.evalInterval), trimDur(f.chunkSize))
-
 	sort.Slice(forDurations, func(i, j int) bool {
 		return forDurations[i] < forDurations[j]
 	})
 
-	runs, err := buildEvalRuns(eng, f.datasource, chain, queryFrom, to, f.step)
+	report, err := buildGrafanaReport(f, eng, chain, queryFrom, from, to, queryFrom, preroll, correlationLabels, forDurations)
 	if err != nil {
 		return err
 	}
-
-	queryCompletePrinted := false
-	for i, run := range runs {
-		if i > 0 {
-			fmt.Println()
-		}
-		for _, info := range run.fetches {
-			if !queryCompletePrinted {
-				fmt.Println(info.queryComplete)
-				fmt.Println()
-				queryCompletePrinted = true
-			}
-			if info.thresholdLine != "" {
-				fmt.Println(info.thresholdLine)
-			}
-		}
-		for _, line := range run.extraLines {
-			fmt.Println(line)
-		}
-
-		if len(run.series) == 0 {
-			fmt.Println("  no data returned")
-			fmt.Println()
-			continue
-		}
-
-		fmt.Println("analysis:")
-		for _, forDur := range forDurations {
-			results := eval.EvaluateFor(run.series, forDur, f.evalInterval)
-			if f.delayResolutionBy > 0 {
-				results = mergePerSeries(results, f.delayResolutionBy)
-			}
-			results = filterFiringsToWindow(results, from, to)
-			totalFirings := 0
-			for _, r := range results {
-				totalFirings += len(r.Firings)
-			}
-
-			if totalFirings == 0 {
-				fmt.Printf("- for %s: never\n", formatDuration(forDur))
-				continue
-			}
-
-			if len(correlationLabels) > 0 {
-				correlated := eval.CorrelatedFirings(results, correlationLabels, f.delayResolutionBy)
-				incidents := eval.GroupIncidents(results, correlationLabels)
-				fmt.Printf("- for %s: %d firings, %d grouped firings, %d incidents\n",
-					formatDuration(forDur), totalFirings, correlated, len(incidents))
-				printIncidents(incidents, f.evalInterval, f.verbose)
-			} else {
-				fmt.Printf("- for %s: %d firings\n", formatDuration(forDur), totalFirings)
-				printFirings(results, f.evalInterval, f.verbose)
-			}
-		}
-	}
+	renderGrafanaReport(os.Stdout, report, f.verbose)
 
 	return nil
 }
 
-type fetchInfo struct {
-	queryComplete string
-	thresholdLine string // empty if no local predicate
-}
-
 type evalRun struct {
 	displayExpr string
-	fetches     []fetchInfo
+	fetches     []reportFetch
 	extraLines  []string // e.g. "combined: ..." for multi-clause
 	series      []model.Series
 }
@@ -412,14 +347,14 @@ func buildEvalRuns(eng *query.Engine, datasource string, chain *clauseChain, que
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, evalRun{displayExpr: r.displayExpr, fetches: []fetchInfo{info}, series: series})
+			out = append(out, evalRun{displayExpr: r.displayExpr, fetches: []reportFetch{info}, series: series})
 		}
 		return out, nil
 	}
 
 	clauseSeries := make([][]model.Series, len(chain.clauses))
 	displayParts := make([]string, len(chain.clauses))
-	var allFetches []fetchInfo
+	var allFetches []reportFetch
 	for i, cl := range chain.clauses {
 		runs, err := buildRuns(cl)
 		if err != nil {
@@ -445,31 +380,21 @@ func buildEvalRuns(eng *query.Engine, datasource string, chain *clauseChain, que
 	}}, nil
 }
 
-func fetchAndFilter(eng *query.Engine, datasource string, r run, queryFrom, to time.Time, step time.Duration) ([]model.Series, fetchInfo, error) {
-	fmt.Printf("expr: %s\n\n", cache.NormalizeExpr(r.fetchExpr))
+func fetchAndFilter(eng *query.Engine, datasource string, r run, queryFrom, to time.Time, step time.Duration) ([]model.Series, reportFetch, error) {
 	result, stats, err := eng.Query(datasource, r.fetchExpr, queryFrom, to, step)
 	if err != nil {
-		return nil, fetchInfo{}, err
-	}
-	totalSamples := 0
-	for _, s := range result.Series {
-		totalSamples += len(s.Samples)
-	}
-	info := fetchInfo{
-		queryComplete: fmt.Sprintf("query complete: %d chunks (%d cached in %s, %d fetched in %s), %d series returned, %d samples total, max chunk cardinality %d", stats.Chunks, stats.CacheHits, trimDur(stats.CacheTime.Round(time.Millisecond)), stats.CacheMisses, trimDur(stats.FetchTime.Round(time.Millisecond)), len(result.Series), totalSamples, stats.MaxCardinality),
+		return nil, reportFetch{}, err
 	}
 	series := result.Series
+	samplesPass := stats.SampleCount
 	if r.predicate != nil {
 		series = applyPredicate(series, r.predicate)
-		kept := 0
+		samplesPass = 0
 		for _, s := range series {
-			kept += len(s.Samples)
+			samplesPass += len(s.Samples)
 		}
-		info.thresholdLine = fmt.Sprintf("local threshold %s: %d samples pass", r.thresholdLabel, kept)
-	} else {
-		info.thresholdLine = fmt.Sprintf("%d samples pass (threshold is in the expression)", totalSamples)
 	}
-	return series, info, nil
+	return series, makeReportFetch(r.fetchExpr, stats, r.thresholdLabel, r.predicate != nil, samplesPass), nil
 }
 
 // newProgressPrinter returns an Engine.Progress callback. In all modes it
@@ -509,7 +434,6 @@ func newProgressPrinter(w *os.File, verbose bool) func(done, total int) {
 		}
 	}
 }
-
 
 // tighter than `or`. We do this in two passes: first collapse each
 // maximal run of `and`-joined clauses left-to-right, then `or` the
@@ -715,7 +639,7 @@ func parseCorrelationID(s string) []string {
 	return out
 }
 
-func printFirings(results []model.AlertResult, evalInterval time.Duration, verbose bool) {
+func printFirings(w io.Writer, results []model.AlertResult, evalInterval time.Duration, verbose bool) {
 	type entry struct {
 		labels  map[string]string
 		firings []model.FiringRange
@@ -734,10 +658,10 @@ func printFirings(results []model.AlertResult, evalInterval time.Duration, verbo
 		if !verbose {
 			continue
 		}
-		fmt.Printf("    %s: %d firings\n", formatLabels(e.labels), len(e.firings))
+		fmt.Fprintf(w, "    %s: %d firings\n", formatLabels(e.labels), len(e.firings))
 		for _, f := range e.firings {
 			end := f.LastFired.Add(evalInterval)
-			fmt.Printf("      %s -> %s (%s, max=%.2f)\n",
+			fmt.Fprintf(w, "      %s -> %s (%s, max=%.2f)\n",
 				f.FirstFired.Format(time.RFC3339),
 				end.Format(time.RFC3339),
 				formatDuration(end.Sub(f.FirstFired)),
@@ -746,15 +670,15 @@ func printFirings(results []model.AlertResult, evalInterval time.Duration, verbo
 	}
 }
 
-func printIncidents(incidents []model.Incident, evalInterval time.Duration, verbose bool) {
+func printIncidents(w io.Writer, incidents []model.Incident, evalInterval time.Duration, verbose bool) {
 	for _, inc := range incidents {
 		if !verbose {
 			continue
 		}
-		fmt.Printf("    %s: %d firings\n", formatLabels(inc.Labels), len(inc.Firings))
+		fmt.Fprintf(w, "    %s: %d firings\n", formatLabels(inc.Labels), len(inc.Firings))
 		for _, f := range inc.Firings {
 			end := f.LastFired.Add(evalInterval)
-			fmt.Printf("      %s -> %s (%s, max=%.2f)\n",
+			fmt.Fprintf(w, "      %s -> %s (%s, max=%.2f)\n",
 				f.FirstFired.Format(time.RFC3339),
 				end.Format(time.RFC3339),
 				formatDuration(end.Sub(f.FirstFired)),

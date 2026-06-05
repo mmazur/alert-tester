@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"time"
 
@@ -16,6 +17,7 @@ type Engine struct {
 	ChunkSize            time.Duration
 	Verbose              bool
 	AllowHighCardinality bool
+	Output               io.Writer
 	// Progress is called once before fetching starts (with done=0) and then
 	// once after each chunk completes (cache hit or fetched). total is the
 	// total chunk count for this Query call.
@@ -23,11 +25,13 @@ type Engine struct {
 }
 
 type Stats struct {
-	CacheHits     int
-	CacheMisses   int
-	Chunks        int
-	CacheTime     time.Duration
-	FetchTime     time.Duration
+	CacheHits      int
+	CacheMisses    int
+	Chunks         int
+	CacheTime      time.Duration
+	FetchTime      time.Duration
+	SeriesReturned int
+	SampleCount    int
 	MaxCardinality int
 }
 
@@ -51,7 +55,7 @@ func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Du
 			stats.CacheHits++
 			stats.CacheTime += time.Since(t0)
 			if e.Verbose {
-				fmt.Printf("  chunk %d/%d [%s - %s] CACHE HIT (%d series)\n", i+1, stats.Chunks, chunk.from.Format(time.RFC3339), chunk.to.Format(time.RFC3339), len(result.Series))
+				e.printf("  chunk %d/%d [%s - %s] CACHE HIT (%d series)\n", i+1, stats.Chunks, chunk.from.Format(time.RFC3339), chunk.to.Format(time.RFC3339), len(result.Series))
 			}
 			if len(result.Series) > stats.MaxCardinality {
 				stats.MaxCardinality = len(result.Series)
@@ -65,7 +69,7 @@ func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Du
 
 		stats.CacheMisses++
 		if e.Verbose {
-			fmt.Printf("  chunk %d/%d [%s - %s] querying...\n", i+1, stats.Chunks, chunk.from.Format(time.RFC3339), chunk.to.Format(time.RFC3339))
+			e.printf("  chunk %d/%d [%s - %s] querying...\n", i+1, stats.Chunks, chunk.from.Format(time.RFC3339), chunk.to.Format(time.RFC3339))
 		}
 
 		t1 := time.Now()
@@ -75,7 +79,7 @@ func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Du
 		}
 		stats.FetchTime += time.Since(t1)
 		if e.Verbose {
-			fmt.Printf("  chunk %d/%d fetched (%d series)\n", i+1, stats.Chunks, len(result.Series))
+			e.printf("  chunk %d/%d fetched (%d series)\n", i+1, stats.Chunks, len(result.Series))
 		}
 		if len(result.Series) > stats.MaxCardinality {
 			stats.MaxCardinality = len(result.Series)
@@ -90,7 +94,7 @@ func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Du
 		}
 
 		if err := e.Cache.Put(e.Client.URL, datasource, expr, chunk.from, chunk.to, step, result); err != nil {
-			fmt.Printf("  warning: cache write failed: %v\n", err)
+			e.printf("  warning: cache write failed: %v\n", err)
 		}
 
 		mergeSeries(seriesMap, result.Series)
@@ -104,10 +108,19 @@ func (e *Engine) Query(datasource, expr string, from, to time.Time, step time.Du
 		sort.Slice(s.Samples, func(i, j int) bool {
 			return s.Samples[i].Timestamp.Before(s.Samples[j].Timestamp)
 		})
+		stats.SampleCount += len(s.Samples)
 		combined.Series = append(combined.Series, *s)
 	}
+	stats.SeriesReturned = len(combined.Series)
 
 	return &combined, stats, nil
+}
+
+func (e *Engine) printf(format string, args ...any) {
+	if e.Output == nil {
+		return
+	}
+	fmt.Fprintf(e.Output, format, args...)
 }
 
 type chunk struct {
