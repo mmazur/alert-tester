@@ -5,24 +5,33 @@ synthetic data, and what would need a real Prometheus to verify.
 
 ## Today
 
-`internal/eval/combine_test.go` covers the multi-clause combiner:
+Run the suite with:
 
-- `TestCombineAnd` — `A and B` on a shared label set keeps only the
-  overlapping timestamps.
-- `TestCombineOr` — `A or B` on two different label sets emits one
-  series per side.
-- `TestCombineAndDifferentLabelSets` — `and` on disjoint label sets
-  yields empty (full-label-set matching, like PromQL with no
-  `on()`/`ignoring()`).
-- `TestCombinePrecedenceAndBindsTighter` — fold `(A and B) or C` vs
-  `A and (B or C)` manually and confirm they differ; documents the
-  precedence that `combineChain` relies on.
+```bash
+go test ./...
+```
 
-Run them: `go test ./...`. That's the entire automated suite right now.
+Current automated coverage includes:
 
-Everything else has been verified by hand against the real Grafana
-cache (see the "Tested in this session" notes in the most recent
-handoff for the exact runs).
+- `internal/eval/combine_test.go` for the multi-clause combiner.
+- `internal/eval/for_test.go` for `for:` timing, NaN resets, and
+  multiple firings on one series.
+- `internal/eval/incident_test.go` for firing merges, grouped firings,
+  and incidents.
+- `internal/query/engine_test.go` for chunk splitting and per-series
+  merging.
+- `cmd/atest/main_test.go` for clause parsing, comparator validation,
+  predicate boundaries, overlap-aware window trimming, render output,
+  and fake-data grafana pipeline tests.
+
+The fake-data pipeline tests cover:
+
+- local threshold evaluation
+- multiple `for:` durations with exact firing ranges
+- multi-clause precedence
+- resolution-delay merging
+- grouped firings and incidents
+- multi-clause sweep rejection
 
 ## What should be unit-tested with synthetic data
 
@@ -31,26 +40,30 @@ fixture. Things worth covering:
 
 ### `eval.EvaluateFor` (for.go)
 
+Covered today:
+
+- `for: N` boundary behavior
+- A NaN sample mid-run resets the run
+- Multiple firings on the same series stay separate without merge logic
+
 - `for: 0` fires on the first non-zero sample.
-- `for: N` does NOT fire when the run is `< N` long (off-by-one at the
-  boundary — pending exactly N seconds with sample interval matching
-  should fire; one tick short should not).
-- A NaN sample mid-run resets the run (matches Alertmanager: missing
-  sample = resolved).
 - A zero sample mid-run resets the run.
 - A series whose samples are all `0` (e.g. `up == 0` when the target is
   down) still fires — Prometheus treats series presence, not value, as
   the fire signal. See issue #1.
-- Multiple firings on the same series: gap of one resolution tick
-  produces two firings, not one merged firing.
 - Subsample alignment: samples at irregular timestamps round to the
   eval-interval grid correctly.
 
 ### `filterFiringsToWindow` (cmd/atest/main.go)
 
-- A firing entirely inside `[from, to)` is kept.
-- A firing entirely before `from` (resolved during preroll) is dropped.
-- A firing entirely after `to` is dropped.
+Covered today:
+
+- inside-window firing kept
+- before-window firing dropped
+- after-window firing dropped
+- overlap from preroll kept
+- firing that starts in-window and continues past `to` kept
+
 - **A firing that began in the preroll and is still active at `from` is
   kept** — its `[FirstFired, LastFired]` overlaps the window even
   though `FirstFired < from`. Regression guard for issue #2: a
@@ -58,26 +71,28 @@ fixture. Things worth covering:
   silently reported as "never firing" because the single continuous
   firing's `FirstFired` landed in the preroll and the old start-in-window
   test dropped it.
-- A firing that began inside the window and continues past `to` is kept.
 
 ### `eval.MergeFirings` (incident.go)
 
+Covered today:
+
+- merge across a positive gap threshold
+- `MaxValue` propagation across a merge
+
 - `mergeGap = 0`: only truly overlapping firings merge.
-- `mergeGap = 10m`: firings with a 5m gap merge into one with the
-  later `LastFired` and the higher `MaxValue`.
 - Three firings A-B-C where A→B is below gap and B→C is above gap
   produces two firings: merged(A,B) and C.
-- `MaxValue` propagates correctly across merges.
 
 ### `eval.CorrelatedFirings` / `eval.GroupIncidents` (incident.go)
 
-- Two series sharing `cluster=foo` produce one correlated firing and
-  one incident, not two.
-- Two series with different `cluster` values produce two incidents.
+Covered today:
+
+- two series sharing one grouping key collapse to one correlated firing
+- different grouping keys produce separate incidents
+- one key can accumulate multiple firings while still being one incident
+
 - `--incident-group-by` not set → `GroupIncidents` not called; caller
   reports raw firing count only.
-- A correlation key that fires, resolves for hours, then fires again:
-  still one incident (no incident-resolution logic — see design doc).
 
 ### `eval.Combine` (combine.go) — already partially covered
 
