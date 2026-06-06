@@ -22,6 +22,8 @@ var replayDefaults = replayConfig{
 	ChunkSize:         time.Hour,
 }
 
+var replayProjectRoot = projectRoot
+
 type replayConfig struct {
 	ForDurations      []time.Duration
 	EvalInterval      time.Duration

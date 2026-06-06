@@ -19,8 +19,8 @@ const (
 // Combine joins two filtered series sets with PromQL set-op semantics.
 //
 // Each clause's series is treated as "presence" data: a sample exists at
-// timestamp T iff that label set is firing at T (callers should drop
-// zero/NaN samples first via NormalizeForCombine).
+// timestamp T iff that label set is firing at T (callers should drop NaN
+// samples first via NormalizeForCombine).
 //
 // Matching is on the full label set, like upstream PromQL with no
 // on()/ignoring() modifier.
@@ -70,16 +70,17 @@ func Combine(left, right []model.Series, op CombineOp) []model.Series {
 	return out
 }
 
-// NormalizeForCombine drops zero and NaN samples so that "sample exists at T"
+// NormalizeForCombine drops NaN samples so that "sample exists at T"
 // uniformly means "firing at T", regardless of whether the clause was filtered
 // by a comparator flag (which already drops non-matching samples) or fetched
-// raw (where 0/NaN means "not firing" by findFirings's convention).
+// raw. Zero-valued samples are preserved because Prometheus alerting is driven
+// by vector presence, not by sample value being > 0.
 func NormalizeForCombine(series []model.Series) []model.Series {
 	out := make([]model.Series, 0, len(series))
 	for _, s := range series {
 		kept := make([]model.Sample, 0, len(s.Samples))
 		for _, sm := range s.Samples {
-			if math.IsNaN(sm.Value) || sm.Value == 0 {
+			if math.IsNaN(sm.Value) {
 				continue
 			}
 			kept = append(kept, sm)

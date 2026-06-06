@@ -29,6 +29,15 @@ func newReplayCompareCmd() *cobra.Command {
 }
 
 func runReplayCompare(oldDir, newDir string) error {
+	oldDir, err := resolveReplayDir(oldDir)
+	if err != nil {
+		return err
+	}
+	newDir, err = resolveReplayDir(newDir)
+	if err != nil {
+		return err
+	}
+
 	oldManifest, err := readReplayManifest(oldDir)
 	if err != nil {
 		return err
@@ -94,6 +103,17 @@ func runReplayCompare(oldDir, newDir string) error {
 	}
 
 	return errReplayDiff
+}
+
+func resolveReplayDir(dir string) (string, error) {
+	if filepath.IsAbs(dir) || strings.Contains(dir, string(os.PathSeparator)) {
+		return dir, nil
+	}
+	root, err := replayProjectRoot()
+	if err != nil {
+		return "", fmt.Errorf("resolve replay %q: %w", dir, err)
+	}
+	return filepath.Join(root, ".local", "replays", dir), nil
 }
 
 func readReplayManifest(dir string) (replayManifest, error) {

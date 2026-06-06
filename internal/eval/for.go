@@ -94,9 +94,9 @@ func findFirings(samples []model.Sample, forDuration time.Duration) []model.Firi
 	inRun := false
 
 	for _, s := range samples {
-		nonZero := s.Value != 0 && !math.IsNaN(s.Value)
+		present := !math.IsNaN(s.Value)
 
-		if nonZero {
+		if present {
 			if !inRun {
 				runStart = s.Timestamp
 				maxVal = s.Value

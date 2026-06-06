@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -84,5 +85,24 @@ func TestCombinePrecedenceAndBindsTighter(t *testing.T) {
 	aAndBC := Combine(a, bOrC, OpAnd)
 	if len(aAndBC) != 1 || len(aAndBC[0].Samples) != 1 {
 		t.Fatalf("A and (B or C): expected 1 series with 1 sample, got %v", aAndBC)
+	}
+}
+
+func TestNormalizeForCombineKeepsZeroValuedSamples(t *testing.T) {
+	t0 := time.Unix(0, 0)
+	in := []model.Series{{
+		Labels: map[string]string{"x": "1"},
+		Samples: []model.Sample{
+			{Timestamp: t0, Value: 0},
+			{Timestamp: t0.Add(time.Minute), Value: math.NaN()},
+		},
+	}}
+
+	got := NormalizeForCombine(in)
+	if len(got) != 1 || len(got[0].Samples) != 1 {
+		t.Fatalf("NormalizeForCombine returned %v, want zero-valued sample kept and NaN dropped", got)
+	}
+	if got[0].Samples[0].Value != 0 {
+		t.Fatalf("kept sample value = %v, want 0", got[0].Samples[0].Value)
 	}
 }

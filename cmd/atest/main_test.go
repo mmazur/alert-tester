@@ -369,6 +369,41 @@ func TestGrafanaPipelineLocalThreshold(t *testing.T) {
 	}
 }
 
+func TestGrafanaPipelineLocalThresholdEqZero(t *testing.T) {
+	from := time.Date(2025, 5, 1, 1, 0, 0, 0, time.UTC)
+	f := &grafanaFlags{
+		grafanaURL:   "https://grafana.example.com",
+		datasource:   "prom",
+		clauseTokens: []clauseToken{{kind: tokQuery, value: "metric"}, {kind: tokCmp, value: "==|0"}},
+		forRaw:       []string{"0m"},
+		fromRaw:      from.Format(time.RFC3339),
+		toRaw:        from.Add(3 * time.Minute).Format(time.RFC3339),
+		chunkSize:    time.Hour,
+		step:         time.Minute,
+		evalInterval: time.Minute,
+		noProgress:   true,
+		verbose:      true,
+	}
+
+	out, _ := renderGrafanaFake(t, f, map[string]fakeQueryResponse{
+		"metric": fakeResponse(seriesAtMinutes(from, map[string]string{"arena": "amber", "bot": "r1"},
+			minutePoint{offset: 0, value: 0},
+			minutePoint{offset: 1, value: 0},
+			minutePoint{offset: 2, value: 1},
+		)),
+	})
+
+	if !strings.Contains(out, "local threshold == 0: 2 samples pass") {
+		t.Fatalf("output missing zero-threshold summary:\n%s", out)
+	}
+	if !strings.Contains(out, "- for 0m: 1 firings") {
+		t.Fatalf("output missing zero-valued firing count:\n%s", out)
+	}
+	if !strings.Contains(out, "2025-05-01T01:00:00Z -> 2025-05-01T01:02:00Z (2m, max=0.00)") {
+		t.Fatalf("output missing zero-valued firing detail:\n%s", out)
+	}
+}
+
 func TestGrafanaPipelineMultiClausePrecedence(t *testing.T) {
 	from := time.Date(2025, 5, 1, 1, 0, 0, 0, time.UTC)
 	f := &grafanaFlags{
