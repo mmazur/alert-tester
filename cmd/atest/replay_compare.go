@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,17 +19,20 @@ import (
 var errReplayDiff = errors.New("replay comparison found differences")
 
 func newReplayCompareCmd() *cobra.Command {
-	return &cobra.Command{
+	var verbose bool
+	cmd := &cobra.Command{
 		Use:   "compare <old> <new>",
 		Short: "Compare two replay captures",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runReplayCompare(args[0], args[1])
+			return runReplayCompare(args[0], args[1], verbose)
 		},
 	}
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show per-case replay diff details")
+	return cmd
 }
 
-func runReplayCompare(oldDir, newDir string) error {
+func runReplayCompare(oldDir, newDir string, verbose bool) error {
 	oldDir, err := resolveReplayDir(oldDir)
 	if err != nil {
 		return err
@@ -91,7 +95,11 @@ func runReplayCompare(oldDir, newDir string) error {
 		return nil
 	}
 
-	fmt.Printf("replays differ: %d changed, %d added, %d removed\n", len(changed), len(added), len(removed))
+	printReplayDiffSummary(os.Stdout, oldCases, newCases, added, removed, changed)
+	if !verbose {
+		fmt.Println("Run with --verbose to show per-case details.")
+		return errReplayDiff
+	}
 	for _, id := range added {
 		printReplayCaseHeader("added", newCases[id])
 	}
@@ -99,10 +107,40 @@ func runReplayCompare(oldDir, newDir string) error {
 		printReplayCaseHeader("removed", oldCases[id])
 	}
 	for _, id := range changed {
-		printReplayCaseDiff(oldDir, newDir, oldCases[id], newCases[id])
+		printReplayCaseDiff(oldCases[id], newCases[id])
 	}
 
 	return errReplayDiff
+}
+
+func printReplayDiffSummary(w io.Writer, oldCases, newCases map[string]replayCaseSummary, added, removed, changed []string) {
+	fmt.Fprintf(w, "replays differ: %d result-changed, %d added, %d removed\n", len(changed), len(added), len(removed))
+	printReplayDatasourceSummary(w, "result-changed", changed, newCases)
+	printReplayDatasourceSummary(w, "added", added, newCases)
+	printReplayDatasourceSummary(w, "removed", removed, oldCases)
+}
+
+func printReplayDatasourceSummary(w io.Writer, kind string, ids []string, cases map[string]replayCaseSummary) {
+	if len(ids) == 0 {
+		return
+	}
+	counts := make(map[string]int)
+	for _, id := range ids {
+		summary, ok := cases[id]
+		if !ok {
+			continue
+		}
+		counts[summary.Datasource]++
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	fmt.Fprintf(w, "%s by datasource:\n", kind)
+	for _, key := range keys {
+		fmt.Fprintf(w, "  %s: %d\n", key, counts[key])
+	}
 }
 
 func resolveReplayDir(dir string) (string, error) {
@@ -187,55 +225,46 @@ func replaySummaryEqual(oldSummary, newSummary replayCaseSummary) bool {
 }
 
 func printReplayCaseHeader(kind string, summary replayCaseSummary) {
-	fmt.Printf("\n[%s] %s\n", kind, summary.ID)
-	fmt.Printf("  source: %s\n", summary.Source)
-	fmt.Printf("  datasource: %s\n", summary.Datasource)
-	fmt.Printf("  expr: %s\n", summary.Expr)
-	fmt.Printf("  step: %s\n", summary.Step)
-	fmt.Printf("  query window: %s -> %s\n", summary.QueryFrom, summary.QueryTo)
-	fmt.Printf("  analysis window: %s -> %s\n", summary.AnalysisFrom, summary.AnalysisTo)
+	printReplayCaseHeaderTo(os.Stdout, kind, summary)
+}
+
+func printReplayCaseHeaderTo(w io.Writer, kind string, summary replayCaseSummary) {
+	fmt.Fprintf(w, "\n[%s] %s\n", kind, summary.ID)
+	fmt.Fprintf(w, "  source: %s\n", summary.Source)
+	fmt.Fprintf(w, "  datasource: %s\n", summary.Datasource)
+	fmt.Fprintf(w, "  expr: %s\n", summary.Expr)
+	fmt.Fprintf(w, "  step: %s\n", summary.Step)
+	fmt.Fprintf(w, "  query window: %s -> %s\n", summary.QueryFrom, summary.QueryTo)
+	fmt.Fprintf(w, "  analysis window: %s -> %s\n", summary.AnalysisFrom, summary.AnalysisTo)
 	if summary.Status != "" {
-		fmt.Printf("  status: %s\n", summary.Status)
+		fmt.Fprintf(w, "  status: %s\n", summary.Status)
 	}
 	if summary.Reason != "" {
-		fmt.Printf("  reason: %s\n", summary.Reason)
+		fmt.Fprintf(w, "  reason: %s\n", summary.Reason)
 	}
 }
 
-func printReplayCaseDiff(oldDir, newDir string, oldSummary, newSummary replayCaseSummary) {
-	fmt.Printf("\n[changed] %s\n", oldSummary.ID)
-	fmt.Printf("  source: %s\n", newSummary.Source)
-	fmt.Printf("  datasource: %s\n", newSummary.Datasource)
-	fmt.Printf("  expr: %s\n", newSummary.Expr)
-	fmt.Printf("  step: %s -> %s\n", oldSummary.Step, newSummary.Step)
-	fmt.Printf("  query window: %s -> %s | %s -> %s\n", oldSummary.QueryFrom, oldSummary.QueryTo, newSummary.QueryFrom, newSummary.QueryTo)
-	fmt.Printf("  analysis window: %s -> %s | %s -> %s\n", oldSummary.AnalysisFrom, oldSummary.AnalysisTo, newSummary.AnalysisFrom, newSummary.AnalysisTo)
+func printReplayCaseDiff(oldSummary, newSummary replayCaseSummary) {
+	printReplayCaseDiffTo(os.Stdout, oldSummary, newSummary)
+}
+
+func printReplayCaseDiffTo(w io.Writer, oldSummary, newSummary replayCaseSummary) {
+	fmt.Fprintf(w, "\n[result-changed] %s\n", oldSummary.ID)
+	fmt.Fprintf(w, "  source: %s\n", newSummary.Source)
+	fmt.Fprintf(w, "  datasource: %s\n", newSummary.Datasource)
+	fmt.Fprintf(w, "  expr: %s\n", newSummary.Expr)
+	fmt.Fprintf(w, "  step: %s -> %s\n", oldSummary.Step, newSummary.Step)
+	fmt.Fprintf(w, "  query window: %s -> %s | %s -> %s\n", oldSummary.QueryFrom, oldSummary.QueryTo, newSummary.QueryFrom, newSummary.QueryTo)
+	fmt.Fprintf(w, "  analysis window: %s -> %s | %s -> %s\n", oldSummary.AnalysisFrom, oldSummary.AnalysisTo, newSummary.AnalysisFrom, newSummary.AnalysisTo)
 	if oldSummary.Status != newSummary.Status {
-		fmt.Printf("  status: %s -> %s\n", oldSummary.Status, newSummary.Status)
+		fmt.Fprintf(w, "  status: %s -> %s\n", oldSummary.Status, newSummary.Status)
 	}
 	if oldSummary.Reason != newSummary.Reason {
-		fmt.Printf("  reason: %q -> %q\n", oldSummary.Reason, newSummary.Reason)
+		fmt.Fprintf(w, "  reason: %q -> %q\n", oldSummary.Reason, newSummary.Reason)
 	}
-	printReplayQueryDiff(oldSummary.Query, newSummary.Query)
-	printReplayAnalysisSummaryDiff(oldSummary.Analyses, newSummary.Analyses)
-
-	if oldSummary.DetailPath == "" || newSummary.DetailPath == "" {
-		return
+	if oldSummary.ID != newSummary.ID {
+		fmt.Fprintf(w, "  case id: %s -> %s\n", oldSummary.ID, newSummary.ID)
 	}
-	oldDetail, err := readReplayDetail(oldDir, oldSummary.DetailPath)
-	if err != nil {
-		fmt.Printf("  detail read error (old): %v\n", err)
-		return
-	}
-	newDetail, err := readReplayDetail(newDir, newSummary.DetailPath)
-	if err != nil {
-		fmt.Printf("  detail read error (new): %v\n", err)
-		return
-	}
-	printReplayDetailDiff(oldDetail, newDetail)
-	fmt.Printf("  detail files:\n")
-	fmt.Printf("    old: %s\n", filepath.Join(oldDir, oldSummary.DetailPath))
-	fmt.Printf("    new: %s\n", filepath.Join(newDir, newSummary.DetailPath))
 }
 
 func printReplayQueryDiff(oldQuery, newQuery replayQuerySummary) {
