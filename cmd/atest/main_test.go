@@ -575,7 +575,7 @@ func TestGrafanaPipelineGroupedFiringsAndIncidents(t *testing.T) {
 		),
 	})
 
-	if !strings.Contains(out, "- for 1m: 5 firings, 3 grouped firings, 2 incidents") {
+	if !strings.Contains(out, "- for 1m: 5 firings, 3 grouped firings (~incidents)") {
 		t.Fatalf("output missing grouped summary:\n%s", out)
 	}
 	if !strings.Contains(out, "    {arena=amber}: 4 firings") {

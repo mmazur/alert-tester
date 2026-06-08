@@ -48,8 +48,8 @@ func renderGrafanaReport(w io.Writer, report *grafanaReport, verbose bool) {
 			}
 
 			if len(analysis.Incidents) > 0 {
-				fmt.Fprintf(w, "- for %s: %d firings, %d grouped firings, %d incidents\n",
-					formatDuration(analysis.ForDuration), analysis.TotalFirings, analysis.GroupedFirings, len(analysis.Incidents))
+				fmt.Fprintf(w, "- for %s: %d firings, %d grouped firings (~incidents)\n",
+					formatDuration(analysis.ForDuration), analysis.TotalFirings, analysis.GroupedFirings)
 				printIncidents(w, analysis.Incidents, report.EvalInterval, verbose)
 				continue
 			}

@@ -109,8 +109,8 @@ fetching: 169
 query complete: 169 chunks (168 cached in 42ms, 1 fetched in 1.2s), 3 series returned, 3024 samples total, max chunk cardinality 3
 
 analysis:
-  for 5m: 47 firings, 38 grouped firings, 3 incidents
-  for 10m: 12 firings, 10 grouped firings, 2 incidents
+  for 5m: 47 firings, 38 grouped firings (~incidents)
+  for 10m: 12 firings, 10 grouped firings (~incidents)
   for 1h: never
 ```
 
