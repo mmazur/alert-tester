@@ -24,6 +24,62 @@ func TestMergeFiringsGap(t *testing.T) {
 	}
 }
 
+func TestCorrelatedFiringsMultiSeriesResolution(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	min := time.Minute
+
+	// Two clusters, 7 series, 7 raw firings.
+	// Grouped by cluster with mergeGap=5m → 3 correlated firings:
+	//
+	// cluster=alpha (4 series, 2 fire/resolve cycles separated by 12m > 5m):
+	//   Cycle 1: pods a,b,c fire overlapping 0–10m → merged: 0–10m
+	//   Cycle 2: pod d fires alone at 22–28m → merged: 22–28m
+	//
+	// cluster=beta (3 series, 1 fire/resolve cycle):
+	//   pods e,f,g fire overlapping 1–12m → merged: 1–12m
+	results := []model.AlertResult{
+		// alpha cycle 1
+		{LabelSet: map[string]string{"cluster": "alpha", "pod": "a"}, Fired: true, Firings: []model.FiringRange{
+			{FirstFired: t0, LastFired: t0.Add(5 * min)},
+		}},
+		{LabelSet: map[string]string{"cluster": "alpha", "pod": "b"}, Fired: true, Firings: []model.FiringRange{
+			{FirstFired: t0.Add(2 * min), LastFired: t0.Add(8 * min)},
+		}},
+		{LabelSet: map[string]string{"cluster": "alpha", "pod": "c"}, Fired: true, Firings: []model.FiringRange{
+			{FirstFired: t0.Add(4 * min), LastFired: t0.Add(10 * min)},
+		}},
+		// alpha cycle 2 (12m gap from cycle 1's end at 10m)
+		{LabelSet: map[string]string{"cluster": "alpha", "pod": "d"}, Fired: true, Firings: []model.FiringRange{
+			{FirstFired: t0.Add(22 * min), LastFired: t0.Add(28 * min)},
+		}},
+		// beta single cycle
+		{LabelSet: map[string]string{"cluster": "beta", "pod": "e"}, Fired: true, Firings: []model.FiringRange{
+			{FirstFired: t0.Add(1 * min), LastFired: t0.Add(6 * min)},
+		}},
+		{LabelSet: map[string]string{"cluster": "beta", "pod": "f"}, Fired: true, Firings: []model.FiringRange{
+			{FirstFired: t0.Add(3 * min), LastFired: t0.Add(9 * min)},
+		}},
+		{LabelSet: map[string]string{"cluster": "beta", "pod": "g"}, Fired: true, Firings: []model.FiringRange{
+			{FirstFired: t0.Add(7 * min), LastFired: t0.Add(12 * min)},
+		}},
+	}
+
+	// Raw firings (how the real code counts TotalFirings): sum of len(r.Firings) per series
+	totalRaw := 0
+	for _, r := range results {
+		totalRaw += len(r.Firings)
+	}
+	if totalRaw != 7 {
+		t.Fatalf("total raw firings = %d, want 7", totalRaw)
+	}
+
+	// Grouped by cluster: alpha→2 cycles, beta→1 cycle = 3 total
+	grouped := CorrelatedFirings(results, []string{"cluster"}, 5*min)
+	if grouped != 3 {
+		t.Fatalf("CorrelatedFirings grouped = %d, want 3 (alpha:2 + beta:1)", grouped)
+	}
+}
+
 func TestCorrelatedFiringsAndGroupIncidents(t *testing.T) {
 	t0 := time.Unix(0, 0).UTC()
 	results := []model.AlertResult{
