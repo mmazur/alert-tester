@@ -30,6 +30,9 @@ go.work.sum
 CLAUDE.local.md
 .local/
 
+/run/
+/reports/
+
 # Editor/IDE
 # .idea/
 # .vscode/
