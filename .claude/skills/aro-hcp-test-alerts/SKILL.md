@@ -47,11 +47,29 @@ Work from the repo root. The helper `runner.sh` lives next to this file in `.cla
 - If that skill is unavailable, stop and tell the user to install the ops
   plugin from `https://github.com/openshift-online/aro-ai-tools`, then retry.
 
-**Datasource type** — `hcps` or `services`. Cannot be reliably guessed; the same
-region has both. If the user didn't state it, **ask** (AskUserQuestion) before
-running. The datasource UID per region is then `<type>-<region>`
-(e.g. `hcps-uksouth`). If a batch genuinely mixes types, ask per alert or have
-the user split the batch.
+**Datasource type** — `hcps` or `services`. The same region has both, so don't
+guess from the metric name. **Derive it from where the alert's rule file is
+wired up**, not by asking and not by probing Grafana:
+
+```bash
+# Given the rule file the alert lives in (e.g. prometheus-prometheusRule.yaml):
+grep -rn "<ruleFileBasename>" ~/aro/ARO-HCP/observability/ \
+  --include=*.yaml --include=*.yml --include=*.json \
+  --include=*.jsonnet --include=*.libsonnet | grep -v "_test.yaml"
+```
+
+The kustomization(s) that reference the file encode the datasource in their
+name: `*-services.yaml` → `services-<region>`, `*-hcps.yaml` (or an `hcps`
+overlay) → `hcps-<region>`. If every referencing file is `*-services.yaml`, the
+alert deploys against **services**; likewise for `hcps`. The datasource UID per
+region is then `<type>-<region>` (e.g. `services-uksouth`).
+
+Only if the grep is genuinely ambiguous (no referencing file, or the file is
+pulled into both an `hcps` and a `services` bundle) fall back to **asking**
+(AskUserQuestion). If a batch genuinely mixes types across alerts, derive each
+alert's type from its own rule file. Do **not** ask the user for a type you can
+determine from the repo, and do **not** burn an atest run or a raw Grafana
+query just to discover it.
 
 **Bearer token** — Azure Managed Grafana tokens expire on the order of an hour,
 which is shorter than long batches take. **Refresh the token immediately before
