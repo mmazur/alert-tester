@@ -588,3 +588,44 @@ func TestGrafanaPipelineGroupedFiringsAndIncidents(t *testing.T) {
 		t.Fatalf("output missing later amber firing detail:\n%s", out)
 	}
 }
+
+func TestGrafanaPipelineHighlightsSustainedFirings(t *testing.T) {
+	from := time.Date(2025, 5, 1, 1, 0, 0, 0, time.UTC)
+	f := &grafanaFlags{
+		grafanaURL:    "https://grafana.example.com",
+		datasource:    "prom",
+		clauseTokens:  []clauseToken{{kind: tokQuery, value: "perma_metric > 0"}},
+		forRaw:        []string{"0s"},
+		fromRaw:       from.Format(time.RFC3339),
+		toRaw:         from.Add(10 * time.Minute).Format(time.RFC3339),
+		chunkSize:     time.Hour,
+		step:          time.Minute,
+		evalInterval:  time.Minute,
+		correlationID: "arena",
+		noProgress:    true,
+	}
+
+	out, _ := renderGrafanaFake(t, f, map[string]fakeQueryResponse{
+		"perma_metric > 0": fakeResponse(seriesAtMinutes(from.Add(-2*time.Minute), map[string]string{"arena": "amber", "bot": "r1"},
+			minutePoint{offset: 0, value: 1},
+			minutePoint{offset: 1, value: 1},
+			minutePoint{offset: 2, value: 1},
+			minutePoint{offset: 3, value: 1},
+			minutePoint{offset: 4, value: 1},
+			minutePoint{offset: 5, value: 1},
+			minutePoint{offset: 6, value: 1},
+			minutePoint{offset: 7, value: 1},
+			minutePoint{offset: 8, value: 1},
+			minutePoint{offset: 9, value: 1},
+			minutePoint{offset: 10, value: 1},
+			minutePoint{offset: 11, value: 1},
+		)),
+	})
+
+	if !strings.Contains(out, "notable findings:\n- sustained firing risk: for 0m, 1 firings and 1 grouped firings were active for >=90% of the requested window (likely permafailing)") {
+		t.Fatalf("output missing notable sustained finding:\n%s", out)
+	}
+	if !strings.Contains(out, "  sustained >=90% of window: 1 firings, 1 grouped firings (likely permafailing)") {
+		t.Fatalf("output missing sustained analysis line:\n%s", out)
+	}
+}

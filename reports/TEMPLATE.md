@@ -11,6 +11,9 @@ Audience: people who care about how the ALERTS behaved — not how atest works.
 - Always include firing counts and grouped-firing/incident counts where atest
   produced them. Do not replace counts with symbolic summaries like `F`/`.` or
   yes/no grids unless the counts are also present nearby.
+- Always promote any `sustained >=90% of window` lines to Notable findings.
+  These indicate likely permafiring alerts that may page immediately if deployed
+  as-is.
 - All atest-internal noise (NODATA diagnosis, transient errors, retries,
   token-refresh fixes, runner classification quirks, log paths, what was
   probed) goes in the LAST section, "Internal Run Info (Ignore)". The reader
@@ -51,6 +54,13 @@ remained. Modified alerts are approximate (e.g. long-lookback records like
 `avg_over_time(foo[30d:5m])` can't be faithfully reconstructed from a 7-day
 fetch); their numbers are indicative, not exact.*
 
+## **Notable findings**
+
+{{Delete this section if empty. Put human-actionable risks here, especially
+alerts that fired for >=90% of the requested window. Example:}}
+
+- **Sustained firing risk:** {{AlertName}} @ {{region}} had {{N}} firings / {{M}} grouped firings active for >=90% of the requested window at `for={{duration}}`; this is likely permafailing and may start firing immediately if deployed as-is.
+
 ## Alerts under test
 
 ### {{AlertName}}
@@ -65,7 +75,7 @@ fetch); their numbers are indicative, not exact.*
   {{the exact -q expression passed to atest; if using local comparison, omit the threshold here and list it above}}
   ```
 - **Results per region:**
-  - **uksouth** — {{e.g. "`--lt 2736`: 57 firings @ for=15m, 13 @ for=30m (1 grouped incident); `--lt 5472`: no firings at any tested for: value" | "no firings at any tested threshold/for value" | "no usable data — <one-sentence reason>" | "run did not complete"}}
+  - **uksouth** — {{e.g. "`--lt 2736`: 57 firings @ for=15m, 13 @ for=30m (1 grouped incident); sustained >=90% window: 1 firing / 1 grouped firing" | "`--lt 5472`: no firings at any tested for: value" | "no firings at any tested threshold/for value" | "no usable data — <one-sentence reason>" | "run did not complete"}}
   - **eastus2** — {{…}}
   - **australiaeast** — {{…}}
 

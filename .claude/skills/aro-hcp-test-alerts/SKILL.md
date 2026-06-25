@@ -105,6 +105,13 @@ per-run is cheap (one `az` call, sub-second when already logged in).
 - **Standard flags:** `--delay-resolution-by 5m --chunk-size 1h`. (Azure Managed
   Prometheus resolves on a 5m delay; matching it avoids over-counting. Override
   per alert only if its rule sets a different resolve time.)
+- **Per-firing durations:** when the user asks how long firings last (or for any
+  report that should characterize firing duration), forward `--verbose` to atest
+  via `runner.sh ... -- --verbose`. Without it the log only carries firing
+  *counts*; with it, each firing prints a `start -> end (duration, max=…)` line
+  under its series. `--verbose` is cache-safe — re-running an already-fetched
+  window just re-emits the analysis from cache in seconds, so add it and re-run
+  rather than refetching from scratch.
 
 ## Step 1 — collect the alerts from the source (freeform)
 
@@ -271,6 +278,9 @@ From each log read the `analysis:` block. Lines look like:
 - `- for 15m: 57 firings, 57 grouped firings (~incidents)` (current binary), or
   `- for 15m: 57 firings, 57 grouped firings, 1 incidents` (older logs) — accept
   both; pull firings, grouped, and incidents when present.
+- `sustained >=90% of window: 1 firings, 1 grouped firings (likely permafailing)`
+  → flag this prominently in the report's Notable findings section; these alerts
+  are likely to start firing immediately if deployed as-is.
 - `- for 1h: never` → zero firings at that `for:`.
 - `no data returned` → query returned no series at all (often the wrong
   datasource type — note it, and consider that the alert may simply be quiet).
@@ -278,7 +288,8 @@ From each log read the `analysis:` block. Lines look like:
 Copy `reports/TEMPLATE.md` to `reports/<YYYY-MM-DD>-<batch>.md` and fill it:
 window, grafana url, datasource type, regions; one results row per (alert,
 region, for); the recording-rule caveat for every constructed alert; and a
-Failures section listing each FAILED run with its reason + log path.
+Notable findings section for sustained/permafiring risks; and a Failures section
+listing each FAILED run with its reason + log path.
 
 Then give the user a short summary: run directory, report path if generated,
 counts (tested / fired / never / no-data / failed), and anything notable.

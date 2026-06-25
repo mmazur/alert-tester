@@ -78,11 +78,14 @@ type reportThreshold struct {
 }
 
 type reportAnalysis struct {
-	ForDuration    time.Duration
-	Results        []model.AlertResult
-	TotalFirings   int
-	GroupedFirings int
-	Incidents      []model.Incident
+	ForDuration              time.Duration
+	Results                  []model.AlertResult
+	TotalFirings             int
+	GroupedFirings           int
+	SustainedFirings         int
+	SustainedGroupedFirings  int
+	SustainedWindowThreshold float64
+	Incidents                []model.Incident
 }
 
 func reportFromRuns(req reportRequest, runs []evalRun) *grafanaReport {
@@ -138,20 +141,69 @@ func analyzeRun(run evalRun, cfg analysisConfig) reportRun {
 		results = filterFiringsToWindow(results, cfg.From, cfg.To)
 
 		analysis := reportAnalysis{
-			ForDuration: forDur,
-			Results:     results,
+			ForDuration:              forDur,
+			Results:                  results,
+			SustainedWindowThreshold: sustainedWindowThreshold,
 		}
 		for _, r := range results {
 			analysis.TotalFirings += len(r.Firings)
 		}
+		analysis.SustainedFirings = countSustainedFirings(results, cfg.From, cfg.To, cfg.EvalInterval, sustainedWindowThreshold)
 		if analysis.TotalFirings > 0 && len(cfg.CorrelationLabels) > 0 {
 			analysis.GroupedFirings = eval.CorrelatedFirings(results, cfg.CorrelationLabels, cfg.DelayResolutionBy)
 			analysis.Incidents = eval.GroupIncidents(results, cfg.CorrelationLabels)
+			analysis.SustainedGroupedFirings = countSustainedGroupedFirings(results, cfg.CorrelationLabels, cfg.From, cfg.To, cfg.EvalInterval, cfg.DelayResolutionBy, sustainedWindowThreshold)
 		}
 		out.Analyses = append(out.Analyses, analysis)
 	}
 
 	return out
+}
+
+const sustainedWindowThreshold = 0.9
+
+func countSustainedFirings(results []model.AlertResult, from, to time.Time, evalInterval time.Duration, threshold float64) int {
+	count := 0
+	for _, r := range results {
+		for _, f := range r.Firings {
+			if firingWindowRatio(f, from, to, evalInterval) >= threshold {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func countSustainedGroupedFirings(results []model.AlertResult, correlationLabels []string, from, to time.Time, evalInterval, mergeGap time.Duration, threshold float64) int {
+	incidents := eval.GroupIncidents(results, correlationLabels)
+	count := 0
+	for _, inc := range incidents {
+		for _, f := range eval.MergeFirings(inc.Firings, mergeGap) {
+			if firingWindowRatio(f, from, to, evalInterval) >= threshold {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func firingWindowRatio(f model.FiringRange, from, to time.Time, evalInterval time.Duration) float64 {
+	window := to.Sub(from)
+	if window <= 0 {
+		return 0
+	}
+	start := f.FirstFired
+	if start.Before(from) {
+		start = from
+	}
+	end := f.LastFired.Add(evalInterval)
+	if end.After(to) {
+		end = to
+	}
+	if !end.After(start) {
+		return 0
+	}
+	return float64(end.Sub(start)) / float64(window)
 }
 
 func makeReportFetch(fetchExpr string, stats query.Stats, thresholdLabel string, predicateApplied bool, samplesPass int) reportFetch {

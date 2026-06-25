@@ -102,6 +102,10 @@ type: grafana, source: https://grafana.example.com, datasource: my-prometheus-ui
 starttime: 2025-05-01T00:00:00Z, endtime: 2025-05-08T00:00:00Z (duration: 168h)
 preroll: 2h (querying from 2025-04-30T22:00:00Z)
 step: 30s, eval-interval: 1m, chunk-size: 1h
+
+notable findings:
+- sustained firing risk: for 5m, 1 firings and 1 grouped firings were active for >=90% of the requested window (likely permafailing)
+
 expr: rate(http_errors_total[5m]) > 0.01
 
 goal: 169 chunks
@@ -109,10 +113,17 @@ fetching: 169
 query complete: 169 chunks (168 cached in 42ms, 1 fetched in 1.2s), 3 series returned, 3024 samples total, max chunk cardinality 3
 
 analysis:
-  for 5m: 47 firings, 38 grouped firings (~incidents)
-  for 10m: 12 firings, 10 grouped firings (~incidents)
-  for 1h: never
+- for 5m: 47 firings, 38 grouped firings (~incidents)
+  sustained >=90% of window: 1 firings, 1 grouped firings (likely permafailing)
+- for 10m: 12 firings, 10 grouped firings (~incidents)
+- for 1h: never
 ```
+
+`notable findings` highlights sustained firing risks: any firing whose overlap
+with the requested `--from`/`--to` window is at least 90% of that window. These
+alerts are likely already failing continuously and may start firing immediately
+if deployed as-is. The calculation uses only the requested analysis window, not
+the preroll.
 
 ### Caching
 

@@ -13,6 +13,7 @@ func renderGrafanaReport(w io.Writer, report *grafanaReport, verbose bool) {
 		fmt.Fprintf(w, "preroll: %s (querying from %s)\n", trimDur(report.Preroll), report.QueryFrom.Format(time.RFC3339))
 	}
 	fmt.Fprintf(w, "step: %s, eval-interval: %s, chunk-size: %s\n", trimDur(report.Step), trimDur(report.EvalInterval), trimDur(report.ChunkSize))
+	printNotableFindings(w, report)
 
 	queryCompletePrinted := false
 	for i, run := range report.Runs {
@@ -50,14 +51,64 @@ func renderGrafanaReport(w io.Writer, report *grafanaReport, verbose bool) {
 			if len(analysis.Incidents) > 0 {
 				fmt.Fprintf(w, "- for %s: %d firings, %d grouped firings (~incidents)\n",
 					formatDuration(analysis.ForDuration), analysis.TotalFirings, analysis.GroupedFirings)
+				printSustainedLine(w, analysis)
 				printIncidents(w, analysis.Incidents, report.EvalInterval, verbose)
 				continue
 			}
 
 			fmt.Fprintf(w, "- for %s: %d firings\n", formatDuration(analysis.ForDuration), analysis.TotalFirings)
+			printSustainedLine(w, analysis)
 			printFirings(w, analysis.Results, report.EvalInterval, verbose)
 		}
 	}
+}
+
+func printNotableFindings(w io.Writer, report *grafanaReport) {
+	var findings []string
+	for _, run := range report.Runs {
+		for _, analysis := range run.Analyses {
+			if analysis.SustainedFirings == 0 && analysis.SustainedGroupedFirings == 0 {
+				continue
+			}
+			if analysis.SustainedGroupedFirings > 0 {
+				findings = append(findings, fmt.Sprintf("sustained firing risk: for %s, %d firings and %d grouped firings were active for >=%.0f%% of the requested window (likely permafailing)",
+					formatDuration(analysis.ForDuration),
+					analysis.SustainedFirings,
+					analysis.SustainedGroupedFirings,
+					analysis.SustainedWindowThreshold*100))
+				continue
+			}
+			findings = append(findings, fmt.Sprintf("sustained firing risk: for %s, %d firings were active for >=%.0f%% of the requested window (likely permafailing)",
+				formatDuration(analysis.ForDuration),
+				analysis.SustainedFirings,
+				analysis.SustainedWindowThreshold*100))
+		}
+	}
+	if len(findings) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "notable findings:")
+	for _, finding := range findings {
+		fmt.Fprintf(w, "- %s\n", finding)
+	}
+	fmt.Fprintln(w)
+}
+
+func printSustainedLine(w io.Writer, analysis reportAnalysis) {
+	if analysis.SustainedFirings == 0 && analysis.SustainedGroupedFirings == 0 {
+		return
+	}
+	if analysis.SustainedGroupedFirings > 0 {
+		fmt.Fprintf(w, "  sustained >=%.0f%% of window: %d firings, %d grouped firings (likely permafailing)\n",
+			analysis.SustainedWindowThreshold*100,
+			analysis.SustainedFirings,
+			analysis.SustainedGroupedFirings)
+		return
+	}
+	fmt.Fprintf(w, "  sustained >=%.0f%% of window: %d firings (likely permafailing)\n",
+		analysis.SustainedWindowThreshold*100,
+		analysis.SustainedFirings)
 }
 
 func renderQueryComplete(stats reportQueryStats) string {
