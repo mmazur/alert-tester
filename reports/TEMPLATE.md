@@ -66,6 +66,7 @@ alerts that fired for >=90% of the requested window. Example:}}
 ### {{AlertName}}
 
 - **Source:** {{alert name in ~/aro/ARO-HCP/observability/alerts/<file>.yaml | pasted PromQL | PR #1234 | path}}
+- **Severity:** {{the alert's declared `severity` label with its SEV mapping, e.g. `critical` (SEV 2) | `warning` (SEV 3) | `info` (SEV 4); note any temporary reduction, e.g. "`warning` (SEV 3) — temporarily reduced from `critical` (SEV 2)"}}
 - **Declared `for:`** {{e.g. 1m → tested 1m,10m,15m,20m | 15m → tested 15m,30m,45m,60m | absent → tested 5m,10m,15m,30m}}
 - **`--incident-group-by`:** {{labels | none}}
 - **Modified:** {{no — uses raw metrics only | yes — recording rules <names> were inlined}}
