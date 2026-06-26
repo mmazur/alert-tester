@@ -37,6 +37,11 @@ Work from the repo root. The helper `runner.sh` lives next to this file in `.cla
    needs explanation you can't give from the existing logs, *write that
    honestly into the report* ("not separately probed; likely cause is X but
    unconfirmed") and stop. Ask the user before running anything extra.
+7. **Do a review pass before running atest.** First collect the alerts, inline
+   any recording rules, evaluate whether each alert should use push-down or a
+   local comparator for cache/speed, and explicitly look for shared raw
+   expressions that can reuse cache. Use that review to choose the fastest
+   semantically-correct invocation shape before starting Step 6.
 
 ## Required inputs (enforce both)
 
@@ -179,9 +184,9 @@ high cardinality), so fail fast and don't let a bad one block the simple ones.
 
 Number the runs so logs sort: `<NN>-<AlertShortName>-<region>.log`.
 
-## Step 5a — before you launch: cache-key planning
+## Step 5a — review pass and cache-key planning
 
-Before kicking off the batch, look at the alerts together and notice
+Before kicking off the batch, do a review pass. Look at the alerts together and notice
 **multiple alerts that share one PromQL formula and only differ by threshold
 and/or `for:`**. This is extremely common (burn-rate alerts: same SLI, four
 threshold tiers; queue-depth alerts: same expression, different limits).
@@ -204,6 +209,20 @@ combined report shape that's awkward to slot back into per-alert results, and
 each alert has its own `for:` and `--incident-group-by` that may differ. The
 "separate iterations, shared cache" pattern keeps each run a clean per-alert
 report and still gets the full speedup from caching.
+
+In the review pass, explicitly determine:
+- which alerts will be run with local comparator flags for cache reuse;
+- which alerts will keep their comparator inline because the raw expression is
+  boolean, uses top-level `and`/`or`/`unless`, or otherwise is not safe/valuable
+  for local eval;
+- the expected cache-sharing groups and any likely speedup;
+- the exact `for:` set and `--incident-group-by` labels for each alert group.
+
+Multiple alerts using same query expression with different local eval values
+should result in significant speedup and is a strong reason to do local eval.
+
+Only pause to present this review if the user explicitly asks for review/plan
+approval before running. Otherwise use it directly and proceed.
 
 (Exception: when the alerts truly are identical except for the threshold AND
 the user explicitly asked for a threshold sweep, then `--gt 0.05,0.15,…` in
@@ -229,6 +248,9 @@ whether the raw query and threshold still mean what the user intends:
   running and explain the likely outcome. Do not spend prod Grafana time on a
   threshold that is obviously always true/false unless the user confirms they
   intentionally want that characterization.
+- If the local comparator does make sense, prefer it for otherwise-identical
+  thresholded alerts because it can collapse many cold Grafana fetches into one
+  cold fetch plus cache hits.
 
 ## Step 6 — run, strictly sequentially
 
