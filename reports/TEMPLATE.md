@@ -75,10 +75,12 @@ alerts that fired for >=90% of the requested window. Example:}}
   ```promql
   {{the exact -q expression passed to atest; if using local comparison, omit the threshold here and list it above}}
   ```
-- **Results per region:**
-  - **uksouth** — {{e.g. "`--lt 2736`: 57 firings @ for=15m, 13 @ for=30m (1 grouped incident); sustained >=90% window: 1 firing / 1 grouped firing" | "`--lt 5472`: no firings at any tested for: value" | "no firings at any tested threshold/for value" | "no usable data — <one-sentence reason>" | "run did not complete"}}
-  - **eastus2** — {{…}}
-  - **australiaeast** — {{…}}
+- **Results per region:** EVERY region bullet below carries its own
+  `([explore](url))` link from that region's RESULT line — including NODATA
+  regions. Never drop it on a region just because it had no data.
+  - **region1** ({{[explore](grafana-explore-url from the RESULT line for this region); NEVER omit this link}}) — {{e.g. "`--lt 2736`: 57 firings @ for=15m, 13 @ for=30m (1 grouped incident); sustained >=90% window: 1 firing / 1 grouped firing" | "`--lt 5472`: no firings at any tested for: value" | "no firings at any tested threshold/for value" | "no usable data — <one-sentence reason>" | "run did not complete"}}
+  - **region2** ({{[explore](url from this region's RESULT line); NEVER omit}}) — {{…}}
+  - **region3** ({{[explore](url from this region's RESULT line); NEVER omit}}) — {{…}}
 
 {{If the alert had no usable data in some region(s), give the reason in ONE
 sentence here, plain English, no atest jargon. E.g.:

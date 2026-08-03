@@ -74,6 +74,23 @@ last_error() {
 
 mkdir -p "$(dirname "$log")"
 
+# Build a clickable Grafana Explore link for this exact (datasource, expr,
+# window). Only datasource/expr/from/to vary; everything else is boilerplate.
+# Grafana wants absolute times as epoch-millisecond strings. Requires jq for
+# correct JSON escaping + percent-encoding; degrades to empty if jq/date fail.
+explore=""
+build_explore() {
+  command -v jq >/dev/null 2>&1 || return
+  local from_ms to_ms panes enc
+  from_ms=$(date -u -d "$from" +%s000 2>/dev/null) || return
+  to_ms=$(date   -u -d "$to"   +%s000 2>/dev/null) || return
+  panes=$(jq -cn --arg ds "$ds" --arg expr "$expr" --arg from "$from_ms" --arg to "$to_ms" \
+    '{"a":{"datasource":$ds,"queries":[{"refId":"A","expr":$expr,"datasource":{"type":"prometheus","uid":$ds},"editorMode":"code"}],"range":{"from":$from,"to":$to}}}') || return
+  enc=$(jq -rn --arg s "$panes" '$s|@uri') || return
+  explore="${url%/}/explore?schemaVersion=1&panes=${enc}"
+}
+build_explore
+
 # Halve a prometheus-style duration. Floor at 10m.
 halve_chunk() {
   case "$1" in
@@ -129,10 +146,10 @@ while :; do
   fi
   case "$verdict" in
     ok)
-      echo "RESULT OK label=${label} log=${log}${escalations:+ escalations=${escalations}}"
+      echo "RESULT OK label=${label} log=${log}${escalations:+ escalations=${escalations}}${explore:+ explore=${explore}}"
       exit 0;;
     nodata)
-      echo "RESULT NODATA label=${label} log=${log}${escalations:+ escalations=${escalations}}"
+      echo "RESULT NODATA label=${label} log=${log}${escalations:+ escalations=${escalations}}${explore:+ explore=${explore}}"
       exit 0;;
     cardinality)
       if [ "$allow_card" = 0 ]; then

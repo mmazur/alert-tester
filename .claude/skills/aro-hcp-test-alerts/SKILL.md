@@ -313,6 +313,12 @@ region, for); the recording-rule caveat for every constructed alert; and a
 Notable findings section for sustained/permafiring risks; and a Failures section
 listing each FAILED run with its reason + log path.
 
+Each OK/NODATA `RESULT` line also carries `explore=<url>` — a clickable Grafana
+Explore link for that exact (datasource, expr, window). Copy it verbatim into
+that region's bullet as `([Explore](<url>))`. The link's expr is the raw `-q`
+string, so for local-comparator runs (`--gt`/`--lt`) it opens the raw series
+without the threshold line; note that once per such alert rather than per region.
+
 Then give the user a short summary: run directory, report path if generated,
 counts (tested / fired / never / no-data / failed), and anything notable.
 
