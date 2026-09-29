@@ -19,6 +19,35 @@ make build
 atest grafana [flags]
 ```
 
+## Cardinality
+
+Rank metrics in a Grafana Prometheus datasource by their current number of
+distinct series:
+
+```bash
+atest cardinality \
+  --grafana-url https://grafana.example.com \
+  --datasource my-prometheus-uid
+```
+
+The command discovers metric names through Grafana, runs one exact-name instant
+query per metric, removes inactive metrics, and sorts the result by series count.
+It defaults to the top 50 results and four concurrent requests.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bearer-token <token>` | `ATEST_GRAFANA_BEARER_TOKEN` env var | Auth token for Grafana |
+| `--metric-regex <regex>` | — | Only query matching metric names |
+| `--min-series <count>` | `1` | Exclude metrics below this current series count |
+| `--limit <count>` | `50` | Maximum rows after sorting; `0` returns all |
+| `--concurrency <count>` | `4` | Maximum concurrent Grafana queries |
+| `--format <table|csv>` | `table` | Output format |
+| `--no-progress` | — | Suppress progress messages written to stderr |
+
+This reports the series returned by an instant query. It is not a sample
+ingestion-rate report and does not reproduce Azure Monitor's rolling 12-hour
+active-series quota calculation.
+
 ### Required flags
 
 | Flag | Description |
