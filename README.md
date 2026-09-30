@@ -160,6 +160,59 @@ expression with `--and`/`--or`. For multi-clause, each clause is fetched once
 in raw form and combined locally per timestamp — expect a few times the cost
 of a single push-down query, not 100×.
 
+### Replay verification against cached data
+
+Use `atest replay` to check whether a code change alters results on historical
+cached data. Capture a baseline before editing, rebuild after the change, then
+capture again and compare:
+
+```bash
+# Before changing code
+make build
+./atest replay capture
+# Save the printed capture directory as OLD.
+
+# Apply the code change, then:
+make build
+./atest replay capture
+# Save the printed capture directory as NEW.
+
+./atest replay compare "$OLD" "$NEW"
+# Show per-case information when results differ:
+./atest replay compare "$OLD" "$NEW" --verbose
+```
+
+`capture` scans all entries under `~/.cache/atest` (override with
+`--cache-dir <path>`), groups cached chunks into contiguous windows per Grafana
+URL, datasource, expression, and step, and runs the evaluation pipeline using
+only cached data. It does not fetch from Grafana or require a bearer token.
+Run it from within the repository; captures are written under
+`.local/replays/<UTC-timestamp>-<build-revision>-<clean|dirty>/`, with a manifest,
+compressed case summaries, and compressed per-case details. `compare` accepts
+either full paths or bare capture directory names.
+
+Keep cache contents and replay flags unchanged between captures so the comparison
+isolates the code change. The defaults are `--for 0s`, `--eval-interval 1m`,
+`--delay-resolution-by 0s`, no `--incident-group-by`, and `--chunk-size 1h`.
+Override these consistently on both captures to exercise other evaluation
+settings, for example `--for 0s,5m,10m --delay-resolution-by 5m
+--incident-group-by cluster`. Replay uses cached expressions, not the original
+invocation's comparator sweeps or multi-clause flags.
+
+Replay reserves an inferred preroll at the beginning of each cached window
+(at least two hours with the defaults) and skips windows too short to evaluate
+afterward. Check the printed `completed`, `skipped`, and `failed` counts:
+individual case failures are recorded but do not make `capture` exit nonzero.
+
+`compare` requires matching schema versions and replay settings. It exits `0`
+when case summaries match and `1` when cases are added, removed, or changed.
+Comparison includes case status, query statistics, and firing, grouped-firing,
+and incident counts, but **does not compare exact firing timestamps or values**:
+detail paths and hashes are ignored. Inspect the per-case detail files when
+changes to firing ranges or values matter even if counts remain identical.
+`--verbose` shows case metadata and status differences, not a full firing-detail
+diff.
+
 ### Timestamps
 
 Supported formats: `2025-05-01T00:00:00Z` (RFC3339), `2025-05-01T00:00:00`, `2025-05-01`.
