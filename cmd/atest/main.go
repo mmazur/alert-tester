@@ -29,6 +29,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.AddCommand(newGrafanaCmd())
+	root.AddCommand(newCardinalityCmd())
 	root.AddCommand(newReplayCmd())
 
 	if err := root.Execute(); err != nil {

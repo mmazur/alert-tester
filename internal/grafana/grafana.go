@@ -8,6 +8,8 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,11 +42,13 @@ type dsQueryRequest struct {
 }
 
 type dsQuery struct {
-	RefID      string            `json:"refId"`
-	Expr       string            `json:"expr"`
-	Datasource dsQueryDatasource `json:"datasource"`
-	IntervalMs int64             `json:"intervalMs"`
-	MaxDataPoints int            `json:"maxDataPoints"`
+	RefID         string            `json:"refId"`
+	Expr          string            `json:"expr"`
+	Datasource    dsQueryDatasource `json:"datasource"`
+	IntervalMs    int64             `json:"intervalMs"`
+	MaxDataPoints int               `json:"maxDataPoints"`
+	Instant       bool              `json:"instant,omitempty"`
+	Range         bool              `json:"range,omitempty"`
 }
 
 type dsQueryDatasource struct {
@@ -70,36 +74,116 @@ func (c *Client) RangeQuery(datasourceUID, expr string, from, to time.Time, step
 		To:   fmt.Sprintf("%d", to.UnixMilli()),
 	}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, 0, fmt.Errorf("marshaling request: %w", err)
+	return c.query(reqBody)
+}
+
+func (c *Client) InstantQuery(datasourceUID, expr string, at time.Time) (*model.QueryResult, error) {
+	reqBody := dsQueryRequest{
+		Queries: []dsQuery{{
+			RefID:         "A",
+			Expr:          expr,
+			Datasource:    dsQueryDatasource{UID: datasourceUID, Type: "prometheus"},
+			IntervalMs:    1000,
+			MaxDataPoints: 1,
+			Instant:       true,
+		}},
+		From: fmt.Sprintf("%d", at.UnixMilli()),
+		To:   fmt.Sprintf("%d", at.UnixMilli()),
 	}
 
-	req, err := http.NewRequest("POST", c.URL+"/api/ds/query", bytes.NewReader(body))
+	result, _, err := c.query(reqBody)
+	return result, err
+}
+
+func (c *Client) MetricNames(datasourceUID string) ([]string, error) {
+	endpoint := c.URL + "/api/datasources/uid/" + url.PathEscape(datasourceUID) + "/resources/api/v1/label/__name__/values"
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("executing request: %w", err)
+		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, 0, fmt.Errorf("reading response: %w", err)
+		return nil, fmt.Errorf("reading response: %w", err)
 	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("grafana returned %d: %s", resp.StatusCode, truncate(string(respBody), 500))
+		return nil, fmt.Errorf("grafana returned %d: %s", resp.StatusCode, truncate(string(body), 500))
 	}
 
-	return parseResponse(respBody)
+	var result struct {
+		Status    string   `json:"status"`
+		Data      []string `json:"data"`
+		ErrorType string   `json:"errorType"`
+		Error     string   `json:"error"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing metric names: %w", err)
+	}
+	if result.Status != "success" {
+		return nil, fmt.Errorf("grafana metric names query failed (%s): %s", result.ErrorType, result.Error)
+	}
+	return result.Data, nil
+}
+
+func (c *Client) query(reqBody dsQueryRequest) (*model.QueryResult, time.Duration, error) {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	for attempt := 0; attempt < 4; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, c.URL+"/api/ds/query", bytes.NewReader(body))
+		if err != nil {
+			return nil, 0, fmt.Errorf("creating request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if c.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return nil, 0, fmt.Errorf("executing request: %w", err)
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, 0, fmt.Errorf("reading response: %w", readErr)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < 3 {
+			time.Sleep(rateLimitDelay(resp.Header.Get("Retry-After"), attempt))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, 0, fmt.Errorf("grafana returned %d: %s", resp.StatusCode, truncate(string(respBody), 500))
+		}
+		return parseResponse(respBody)
+	}
+
+	panic("unreachable")
+}
+
+func rateLimitDelay(retryAfter string, attempt int) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if retryAt, err := http.ParseTime(retryAfter); err == nil {
+		if delay := time.Until(retryAt); delay > 0 {
+			return delay
+		}
+		return 0
+	}
+	return time.Second << attempt
 }
 
 func parseExecutedStep(s string) (time.Duration, bool) {
