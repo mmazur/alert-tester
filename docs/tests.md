@@ -23,6 +23,22 @@ Current automated coverage includes:
 - `cmd/atest/main_test.go` for clause parsing, comparator validation,
   predicate boundaries, overlap-aware window trimming, render output,
   and fake-data grafana pipeline tests.
+- `internal/grafana/rangequery_test.go` for the `RangeQuery` HTTP
+  contract against an `httptest` server: exact request body, auth
+  header, step clamping/`maxDataPoints`, frame parsing (null/NaN/Inf
+  skipped, executed step), and error handling (non-429 errors are not
+  retried).
+- `internal/grafana/ratelimit_test.go` and `grafana_test.go` for the
+  429 retry loop (`Retry-After` seconds/HTTP-date, 4-attempt cap,
+  identical retried request), `InstantQuery`, and `MetricNames`
+  (UID escaping, error paths; no 429 retry).
+- `internal/query/engine_client_test.go` for `query.Engine` driven
+  through a real `grafana.Client`: chunk boundaries, cache reuse,
+  error propagation, step-widening abort, and the cardinality limit.
+- `cmd/atest/cardinality_test.go` and `cardinality_run_test.go` for
+  `atest cardinality` end-to-end against a fake Grafana: table/CSV
+  output, `--limit`/`--min-series`/`--metric-regex`, partial-failure
+  warnings, bounded concurrency, token from env, and flag validation.
 
 The fake-data pipeline tests cover:
 
